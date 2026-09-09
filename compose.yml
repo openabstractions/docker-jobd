@@ -1,7 +1,6 @@
 services:
   jobd:
-    image: jobd
-    build: .
+    image: ghcr.io/openabstractions/jobd
     container_name: jobd
     restart: unless-stopped
     read_only: true

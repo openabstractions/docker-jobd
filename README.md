@@ -1,7 +1,9 @@
 # docker-jobd
 
-**In development.** No tagged release; the image builds from a published
-module, not a copy of jobd's source.
+**In development.** The image is built from a published module, never from a
+copy of jobd's source, and it is **not signed**: it carries a GitHub build
+provenance attestation, which records which workflow and commit produced it,
+and no signature from a certificate this project holds.
 
 **A download manager for any NAS that runs Docker, with no web page.** A
 program on your PC drops a request into a shared folder; `jobd` on the NAS
@@ -15,9 +17,22 @@ Package Center and with a window on the DSM desktop:
 program, same behaviour; only the way it is installed differs.
 
 ```
-docker build -t jobd https://github.com/openabstractions/docker-jobd.git
 docker run -d --name jobd --restart unless-stopped --user "$(id -u):$(id -g)" \
-  -v /volume1/docker/jobd:/store -v /etc/ssl/certs:/etc/ssl/certs:ro jobd
+  -v /volume1/docker/jobd:/store -v /etc/ssl/certs:/etc/ssl/certs:ro \
+  ghcr.io/openabstractions/jobd
+```
+
+`linux/amd64` and `linux/arm64`; `docker` picks the one your NAS has. To build
+it yourself instead, which needs no registry:
+
+```
+docker build -t jobd https://github.com/openabstractions/docker-jobd.git
+```
+
+What the published image claims about its own origin, and what it does not:
+
+```
+gh attestation verify oci://ghcr.io/openabstractions/jobd --owner openabstractions
 ```
 
 Files land in `/volume1/docker/jobd/files/` — `\\nas\docker\jobd\files\` from
@@ -94,11 +109,12 @@ compose file as a project; if that works or fails, say so in an issue.
 - **`not usable as a store`**: the folder is owned by somebody else. Fix
   `--user`, or `chmod -R a+rwX` the folder.
 - **Two supervisors on one store** is untested. Run one `jobd` per folder.
-- **`arm64`** builds with `--platform linux/arm64` and has not been run.
+- **`arm64`** is published and has never been run: no arm64 machine has started
+  this image. Only the `amd64` one is exercised before it is pushed.
 - **A partly fetched download restarts from zero** on the NAS rather than
   resuming, and bytes already fetched on the PC are not handed over.
 
-Not on a registry yet, which is why line one builds it. The image is one static
-binary and two empty directories, about 7 MB; there is no shell in it.
+The image is one static binary and two empty directories, about 7 MB; there is
+no shell in it, so there is nothing to exec into and nothing to attack.
 
 [abstraction-download]: https://github.com/openabstractions/abstraction-download

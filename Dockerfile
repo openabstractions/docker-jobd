@@ -1,4 +1,6 @@
-FROM golang:1.26.5-bookworm@sha256:53eeac89074db483fdf0ab3be1df32bf6e47562263d2d0d6baa7f26acb4957dd AS build
+# Pinned to the machine doing the building, not to the machine being built for:
+# Go cross-compiles, so an arm64 image needs no emulator and no binfmt handler.
+FROM --platform=$BUILDPLATFORM golang:1.26.5-bookworm@sha256:53eeac89074db483fdf0ab3be1df32bf6e47562263d2d0d6baa7f26acb4957dd AS build
 ARG JOBD=github.com/openabstractions/service-jobd@v0.2.0
 ARG TARGETARCH
 # CGO off: a static binary any Linux kernel loads, including a 2019 DSM userland.
