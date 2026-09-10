@@ -1,0 +1,157 @@
+name: image
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'image tag to push, e.g. v0.1.0'
+        required: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  IMAGE: ghcr.io/openabstractions/jobd
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: state
+        run: |
+          printf 'a hosted runner, %s logical CPUs, %s %s, on mains\n' \
+            "$(getconf _NPROCESSORS_ONLN)" "$RUNNER_OS" "$RUNNER_ARCH"
+          docker version --format '{{.Server.Version}}'
+          docker buildx version
+
+      - name: the module this image installs
+        id: jobd
+        run: |
+          jobd=$(sed -n 's/^ARG JOBD=//p' Dockerfile)
+          [ -n "$jobd" ] || { printf 'FAIL  the Dockerfile names no JOBD module\n'; exit 1; }
+          case "$jobd" in
+            *@v[0-9]*) ;;
+            *) printf 'FAIL  %s is not a published version. This image is built from a\n' "$jobd"
+               printf '      published tag, never from a branch or a source tree.\n'; exit 1 ;;
+          esac
+          printf 'ok    %s\n' "$jobd"
+          echo "module=$jobd" >> "$GITHUB_OUTPUT"
+
+      # The published module has to resolve before a layer is built, so that a
+      # broken module graph fails here and names itself, rather than failing
+      # inside a build stage as an opaque non-zero exit.
+      - name: the module resolves for a stranger
+        env:
+          GOFLAGS: -mod=mod
+        run: |
+          m=${{ steps.jobd.outputs.module }}
+          path=${m%@*}
+          version=${m##*@}
+          if ! curl -fsS "https://proxy.golang.org/$path/@v/$version.info" -o info.json; then
+            printf 'FAIL  %s is not on proxy.golang.org. Nothing outside this org can install it.\n' "$m"
+            exit 1
+          fi
+          cat info.json
+          printf 'ok    %s resolves from the proxy, which is the only route a stranger has\n' "$m"
+
+      - name: tag
+        id: tag
+        run: |
+          t=${{ github.event.inputs.tag }}
+          [ -n "$t" ] || t=$GITHUB_REF_NAME
+          case "$t" in
+            v[0-9]*) ;;
+            *) printf 'FAIL  %s is not a vN.N.N tag\n' "$t"; exit 1 ;;
+          esac
+          printf 'tag %s\n' "$t"
+          echo "tag=$t" >> "$GITHUB_OUTPUT"
+
+      - name: log in to ghcr
+        run: printf '%s' "${{ secrets.GITHUB_TOKEN }}" |
+          docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # linux/arm64 costs no emulator here: the build stage is pinned to
+      # BUILDPLATFORM and Go cross-compiles, so both platforms are built by the
+      # runner's own amd64 CPU.
+      - name: build and push
+        id: push
+        run: |
+          docker buildx create --use --driver docker-container
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg "JOBD=${{ steps.jobd.outputs.module }}" \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.description=A download manager for a NAS, with no web page." \
+            --label "org.opencontainers.image.licenses=Apache-2.0" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --tag "$IMAGE:${{ steps.tag.outputs.tag }}" \
+            --tag "$IMAGE:latest" \
+            --metadata-file meta.json \
+            --push .
+          digest=$(sed -n 's/.*"containerimage.digest": *"\([^"]*\)".*/\1/p' meta.json)
+          [ -n "$digest" ] || { printf 'FAIL  buildx pushed no digest\n'; exit 1; }
+          printf 'ok    %s@%s\n' "$IMAGE" "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      # A tag that pushed and a tag that runs are different claims. This makes
+      # the second one, on the arch the runner actually has.
+      - name: the pushed image runs
+        run: |
+          ref="$IMAGE@${{ steps.push.outputs.digest }}"
+          docker pull --platform linux/amd64 "$ref"
+          store=$(mktemp -d)
+          chmod 777 "$store"
+          out=$(docker run --rm --platform linux/amd64 -u "$(id -u):$(id -g)" \
+                  -v "$store:/store" "$ref" status --exit-code 2>&1) || true
+          printf '%s\n' "$out"
+          case "$out" in
+            *store:*) printf 'ok    the image starts and reads its store\n' ;;
+            *) printf 'FAIL  the image did not report a store\n'; exit 1 ;;
+          esac
+          size=$(docker image inspect "$ref" --format '{{.Size}}')
+          printf 'ok    %s bytes uncompressed\n' "$size"
+          {
+            printf '\n### Image\n\n'
+            printf '`%s`\n\n' "$ref"
+            printf -- '- tags: `%s`, `latest`\n' "${{ steps.tag.outputs.tag }}"
+            printf -- '- platforms: linux/amd64, linux/arm64\n'
+            printf -- '- built from `%s`, a published module version\n' "${{ steps.jobd.outputs.module }}"
+            printf -- '- %s bytes uncompressed on amd64\n' "$size"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: what this did not prove
+        if: always()
+        run: |
+          {
+            printf '\n### UNPROVEN\n\n'
+            printf 'The image is **not signed** with any code-signing identity. It carries a\n'
+            printf 'GitHub build-provenance attestation, which says which workflow and commit\n'
+            printf 'produced this digest; that is a different and weaker claim than a signature\n'
+            printf 'from a certificate the project holds. Verify what it does say with:\n\n'
+            printf '    gh attestation verify oci://%s@%s --owner openabstractions\n\n' \
+              "$IMAGE" "${{ steps.push.outputs.digest }}"
+            printf 'Also not run here:\n\n'
+            printf -- '- **linux/arm64 was built and never executed.** No arm64 machine ran this image.\n'
+            printf -- '- no real download. Nothing in this job reaches a network as jobd would.\n'
+            printf -- '- no NAS. Not DSM 6, not DSM 7, not Container Manager, not a real SMB share.\n'
+            printf -- '- no supervisor lifetime: `status` was run once, `run` was never left watching.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
