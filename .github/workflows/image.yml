@@ -53,19 +53,39 @@ jobs:
       # The published module has to resolve before a layer is built, so that a
       # broken module graph fails here and names itself, rather than failing
       # inside a build stage as an opaque non-zero exit.
-      - name: the module resolves for a stranger
+      #
+      # Two questions, and the proxy can only answer the second. Does the
+      # version exist: the repository answers that, and only the repository —
+      # proxy.golang.org serves a deleted tag forever and served
+      # service-jobd v0.2.0 for a repository that has never had a tag at all.
+      # Can a stranger fetch it: the proxy answers that, because `go install`
+      # goes through it. A green from the proxy alone means neither.
+      - name: the tag exists, and the module resolves for a stranger
         env:
           GOFLAGS: -mod=mod
         run: |
           m=${{ steps.jobd.outputs.module }}
           path=${m%@*}
           version=${m##*@}
+          rest=${path#github.com/openabstractions/}
+          repo=${rest%%/*}
+          sub=${rest#"$repo"}; sub=${sub#/}
+          case "$sub" in cmd/*|'') dir= ;; *) dir=${sub%%/cmd/*} ;; esac
+          tag=${dir:+$dir/}$version
+          if ! git ls-remote --tags --exit-code \
+                 "https://github.com/openabstractions/$repo" "refs/tags/$tag" > /dev/null; then
+            printf 'FAIL  %s has no tag %s, so this version was deleted or never pushed.\n' "$repo" "$tag"
+            printf '      proxy.golang.org may still serve it; a clone of the repository will not.\n'
+            exit 1
+          fi
+          printf 'ok    %s is a tag on %s\n' "$tag" "$repo"
           if ! curl -fsS "https://proxy.golang.org/$path/@v/$version.info" -o info.json; then
-            printf 'FAIL  %s is not on proxy.golang.org. Nothing outside this org can install it.\n' "$m"
+            printf 'FAIL  %s is a tag and proxy.golang.org has not served it, so go install\n' "$m"
+            printf '      cannot reach it yet. Nothing outside this org can install it.\n'
             exit 1
           fi
           cat info.json
-          printf 'ok    %s resolves from the proxy, which is the only route a stranger has\n' "$m"
+          printf 'ok    %s resolves from the proxy, which is the route go install takes\n' "$m"
 
       - name: tag
         id: tag

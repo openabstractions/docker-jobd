@@ -61,9 +61,12 @@ Any program built on [abstraction-download] hands work over on its own; the
 command-line one is `dl`. On the PC, with Go 1.26 installed:
 
 ```
-go install github.com/openabstractions/abstraction-download/go/cmd/dl@v0.2.1
+go install github.com/openabstractions/abstraction-download/go/cmd/dl@v0.4.1
 setx ABSTRACTION_NAS_STORE \\nas\docker\jobd
 ```
+
+That version is the newest at the time of writing; the current ones are at
+[abstraction-download/tags].
 
 Open a new terminal, then:
 
@@ -118,3 +121,4 @@ The image is one static binary and two empty directories, about 7 MB; there is
 no shell in it, so there is nothing to exec into and nothing to attack.
 
 [abstraction-download]: https://github.com/openabstractions/abstraction-download
+[abstraction-download/tags]: https://github.com/openabstractions/abstraction-download/tags
