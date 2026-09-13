@@ -1,5 +1,10 @@
 # docker-jobd
 
+This page describes an explicitly selected legacy provider/backend. Normal
+applications use the local service API; the service owns shared-store and NAS
+access. See the parent project for current resolved-client adoption.
+
+
 **In development.** The image is built from a published module, never from a
 copy of jobd's source, and it is **not signed**: it carries a GitHub build
 provenance attestation, which records which workflow and commit produced it,
